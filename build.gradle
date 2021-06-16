@@ -1,37 +1,266 @@
-plugins {
-	id 'org.springframework.boot' version '2.5.1'
-	id 'io.spring.dependency-management' version '1.0.11.RELEASE'
-	id 'java'
-}
-
-group = 'com.ford.taas'
-version = '0.0.1-SNAPSHOT'
-sourceCompatibility = '11'
-
-repositories {
-	mavenCentral()
-}
-
-ext {
-	set('springCloudVersion', "2020.0.3")
-}
-
-dependencies {
-	implementation 'org.springframework.boot:spring-boot-starter-actuator'
-//	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-	implementation 'org.springframework.boot:spring-boot-starter-web'
-//	implementation 'org.springframework.cloud:spring-cloud-config-server'
-//	implementation 'org.springframework.cloud:spring-cloud-starter-config'
-//	implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
-	testImplementation 'org.springframework.boot:spring-boot-starter-test'
-}
-
-dependencyManagement {
-	imports {
-		mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+buildscript {
+	ext {
+		springBootVersion = '2.1.2.RELEASE'
+		lombokVersion = '1.18.4'
+		junit5Version = '5.1.0'
+		openfeignVersion = '2.0.2.RELEASE'
+		springCloudVersion = 'Greenwich.RELEASE'
+		springCloudServicesVersion = '3.0.1.RELEASE'
+		FOMSVersion = '1.4.0'
+		jvmArgs = (project.hasProperty('jvmArgs')) ? (project.jvmArgs.split("\\s+") as List) : []
+	}
+	repositories {
+		mavenCentral()
+		maven { url "https://plugins.gradle.org/m2/" }
+	}
+	dependencies {
+		classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+		classpath("io.spring.gradle:dependency-management-plugin:0.6.0.RELEASE")
+		classpath "gradle.plugin.com.avast.gradle:gradle-docker-compose-plugin:1"
 	}
 }
 
-test {
-	useJUnitPlatform()
+plugins {
+	id 'org.sonarqube' version '2.7.1'
+	id 'jacoco'
+}
+
+tasks.withType(JavaCompile) {
+	options.fork = true
+}
+
+tasks.withType(Test) {
+	maxParallelForks = Runtime.runtime.availableProcessors()
+}
+
+apply plugin: 'docker-compose'
+
+dockerCompose {
+	captureContainersOutput true
+}
+
+def getGitHash = { ->
+	def stdout = new ByteArrayOutputStream()
+	exec {
+		commandLine 'git', 'rev-parse', '--short', 'HEAD'
+		standardOutput = stdout
+	}
+	return stdout.toString().trim()
+}
+
+sonarqube {
+	properties {
+		property "sonar.projectName", "Dynamic Routing Gen 3"
+		property "sonar.projectKey", "com.ford.gdia:raas"
+		property "sonar.projectVersion", getGitHash()
+		property "sonar.sources", "src"
+		property "sonar.java.binaries", "build/classes"
+	}
+}
+
+task bootEureka(dependsOn: [':spring-apps:eureka-server:bootRun'])
+
+task bootEurekaAndDatabase(dependsOn: ['bootEureka', 'composeUp']) {
+	group "application"
+}
+
+task copyStartupSql(type: Exec) {
+	group "docker"
+	commandLine "docker", "cp", "docker/mssql/scripts/startup.sql", "vra.database:/scripts/startup.sql"
+}
+
+task runStartupSql(type: Exec) {
+	group "docker"
+	dependsOn copyStartupSql
+	commandLine "docker", "exec", "vra.database", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "SA", "-P", "systemAdminSuperPassword12345!", "-i", "/scripts/startup.sql"
+}
+
+task clearThenPopulateLocalDB(type: Exec) {
+	group "docker"
+	commandLine "docker", "exec", "vra.database", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "SA", "-P", "systemAdminSuperPassword12345!", "-i", "/scripts/startup.sql"
+	commandLine "docker", "exec", "vra.database", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "SA", "-P", "systemAdminSuperPassword12345!", "-i", "/scripts/clearThenPopulateLocalDB.sql"
+}
+
+task updateTenant(type: Exec) {
+	group "docker"
+	commandLine "docker", "exec", "vra.database", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "SA", "-P", "systemAdminSuperPassword12345!", "-i", "/scripts/updateTenant.sql"
+}
+
+bootEureka.mustRunAfter(composeUp)
+
+subprojects {
+	group 'com.ford.taas.vra'
+
+	apply plugin: 'java'
+	apply plugin: 'org.springframework.boot'
+	apply plugin: 'io.spring.dependency-management'
+	apply plugin: "org.sonarqube"
+	apply plugin: "jacoco"
+
+	repositories {
+		jcenter()
+		mavenCentral()
+		mavenLocal()
+		maven {
+			url "https://oss.sonatype.org/content/repositories/snapshots"
+		}
+		maven {
+			url 'https://repo.hortonworks.com/content/repositories/releases/'
+		}
+		maven {
+			url "https://repo.spring.io/plugins-release/"
+		}
+		maven {
+			url "https://repo.spring.io/libs-release/"
+		}
+	}
+
+	dependencyManagement {
+		imports {
+			mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+			mavenBom "io.pivotal.spring.cloud:spring-cloud-services-dependencies:${springCloudServicesVersion}"
+		}
+	}
+
+	dependencies {
+
+		implementation "org.springframework.boot:spring-boot-starter-web:${springBootVersion}"
+		testImplementation "org.springframework.boot:spring-boot-starter-test:${springBootVersion}"
+		implementation "org.springframework.boot:spring-boot-starter-data-jpa:${springBootVersion}"
+		testRuntimeOnly 'com.fasterxml.jackson.module:jackson-modules-java8:2.10.0'
+
+
+		annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
+		compileOnly "org.projectlombok:lombok:${lombokVersion}"
+		testAnnotationProcessor "org.projectlombok:lombok:${lombokVersion}"
+		testCompileOnly "org.projectlombok:lombok:${lombokVersion}"
+
+
+		testImplementation "org.junit.jupiter:junit-jupiter-api:${junit5Version}"
+		testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junit5Version}"
+		testImplementation "org.mockito:mockito-junit-jupiter:2.23.4"
+		testImplementation 'io.rest-assured:rest-assured'
+		testImplementation 'com.github.tomakehurst:wiremock-standalone:2.20.0'
+	}
+
+	jacocoTestReport {
+		reports {
+			xml.enabled true
+			xml.destination file("${buildDir}/jacoco/report.xml")
+			html.destination file("${buildDir}/jacocoHtml")
+		}
+	}
+
+	bootJar {
+		enabled = false
+	}
+
+	task pathingJar(type: Jar) {
+		dependsOn configurations.runtimeClasspath
+		appendix = 'pathing'
+
+		doFirst {
+			manifest {
+				attributes "Class-Path": configurations.runtimeClasspath.files.collect {
+					it.toURL().toString().replaceFirst("file:/", '/')
+				}.join(" ")
+			}
+		}
+	}
+
+	bootRun {
+		jvmArgs = rootProject.ext.jvmArgs
+		dependsOn pathingJar
+		doFirst {
+			classpath = files(sourceSets.main.output.files, pathingJar.archivePath)
+		}
+	}
+
+	//Running this built-in Gradle task does not run SpringBoot tests with this configuration.
+	//To run Spring tests, run one of the tasks that includes the 'Slow' tags (@SlowTest annotation on the test class)
+	test {
+		useJUnitPlatform {
+			excludeTags('EndToEnd', 'Slow', 'Benchmark', 'Functional', 'BenchmarkApiTest', 'SimulationBenchmarkApiTest')
+		}
+	}
+
+	task slowTests(type: Test) {
+		group "vra tests"
+		useJUnitPlatform {
+			includeTags 'Slow'
+			excludeTags('EndToEnd', 'Benchmark', 'Functional', 'BenchmarkApiTest', 'SimulationBenchmarkApiTest')
+		}
+		systemProperty "projectRoot", rootProject.projectDir.toString()
+	}
+
+	task fastTests(type: Test) {
+		group "vra tests"
+		useJUnitPlatform {
+			excludeTags('Slow', 'EndToEnd', 'Benchmark', 'Functional', 'BenchmarkApiTest', 'SimulationBenchmarkApiTest')
+		}
+	}
+
+	task endToEndTests(type: Test) {
+		jvmArgs = rootProject.ext.jvmArgs
+		group "vra tests"
+		useJUnitPlatform {
+			includeTags 'EndToEnd'
+			excludeTags '!EndToEnd'
+		}
+	}
+
+	task benchmark(type: Test) {
+		group "vra tests"
+		useJUnitPlatform {
+			includeTags 'Benchmark'
+			excludeTags '!Benchmark'
+		}
+		systemProperty "projectRoot", rootProject.projectDir.toString()
+	}
+
+	task benchmarkApiTest(type: Test) {
+		jvmArgs = rootProject.ext.jvmArgs
+		group "vra tests"
+		useJUnitPlatform {
+			includeTags 'BenchmarkApiTest'
+			excludeTags '!BenchmarkApiTest'
+		}
+		systemProperty "projectRoot", rootProject.projectDir.toString()
+	}
+
+	task simulateBenchmarkApiTest(type: Test) {
+		jvmArgs = rootProject.ext.jvmArgs
+		group "vra tests"
+		useJUnitPlatform {
+			includeTags 'SimulationBenchmarkApiTest'
+			excludeTags '!SimulationBenchmarkApiTest'
+		}
+		systemProperty "projectRoot", rootProject.projectDir.toString()
+	}
+
+	task functional(type: Test) {
+		group "vra tests"
+		useJUnitPlatform {
+			includeTags 'Functional'
+			excludeTags '!Functional'
+		}
+	}
+
+	task allButEndToEndTests(type: Test) {
+		group "vra tests"
+		useJUnitPlatform {
+			excludeTags('EndToEnd', 'Benchmark', 'Functional', 'BenchmarkApiTest', 'SimulationBenchmarkApiTest')
+		}
+	}
+
+	version = project.hasProperty('projectVersion') ? project.projectVersion : '0.0.1-SNAPSHOT'
+	sourceCompatibility = 1.8
+	targetCompatibility = 1.8
+
+	sourceSets {
+		main.java.srcDir "src/main/java"
+		test.java.srcDir "src/test/java"
+
+		test.resources.srcDir "src/test/resources"
+	}
 }

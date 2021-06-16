@@ -1,1 +1,6 @@
-rootProject.name = 'vra'
+rootProject.name = 'vra-sandbox'
+
+include "spring-apps:routing-server"
+include "spring-apps:mapping-server"
+
+include "spring-components:shared-services"

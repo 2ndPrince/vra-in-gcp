@@ -1,0 +1,16 @@
+bootRun {
+    enabled = true
+    main = 'com.ford.taas.vra.RoutingApplication'
+}
+
+jar {
+    enabled = false
+}
+
+dependencies {
+//    compile project(":spring-components:shared-services")
+}
+
+bootJar {
+    enabled = true
+}
