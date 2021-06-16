@@ -38,56 +38,6 @@ apply plugin: 'docker-compose'
 dockerCompose {
 	captureContainersOutput true
 }
-
-def getGitHash = { ->
-	def stdout = new ByteArrayOutputStream()
-	exec {
-		commandLine 'git', 'rev-parse', '--short', 'HEAD'
-		standardOutput = stdout
-	}
-	return stdout.toString().trim()
-}
-
-sonarqube {
-	properties {
-		property "sonar.projectName", "Dynamic Routing Gen 3"
-		property "sonar.projectKey", "com.ford.gdia:raas"
-		property "sonar.projectVersion", getGitHash()
-		property "sonar.sources", "src"
-		property "sonar.java.binaries", "build/classes"
-	}
-}
-
-task bootEureka(dependsOn: [':spring-apps:eureka-server:bootRun'])
-
-task bootEurekaAndDatabase(dependsOn: ['bootEureka', 'composeUp']) {
-	group "application"
-}
-
-task copyStartupSql(type: Exec) {
-	group "docker"
-	commandLine "docker", "cp", "docker/mssql/scripts/startup.sql", "vra.database:/scripts/startup.sql"
-}
-
-task runStartupSql(type: Exec) {
-	group "docker"
-	dependsOn copyStartupSql
-	commandLine "docker", "exec", "vra.database", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "SA", "-P", "systemAdminSuperPassword12345!", "-i", "/scripts/startup.sql"
-}
-
-task clearThenPopulateLocalDB(type: Exec) {
-	group "docker"
-	commandLine "docker", "exec", "vra.database", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "SA", "-P", "systemAdminSuperPassword12345!", "-i", "/scripts/startup.sql"
-	commandLine "docker", "exec", "vra.database", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "SA", "-P", "systemAdminSuperPassword12345!", "-i", "/scripts/clearThenPopulateLocalDB.sql"
-}
-
-task updateTenant(type: Exec) {
-	group "docker"
-	commandLine "docker", "exec", "vra.database", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "SA", "-P", "systemAdminSuperPassword12345!", "-i", "/scripts/updateTenant.sql"
-}
-
-bootEureka.mustRunAfter(composeUp)
-
 subprojects {
 	group 'com.ford.taas.vra'
 
@@ -124,7 +74,7 @@ subprojects {
 
 	dependencies {
 
-		implementation "org.springframework.boot:spring-boot-starter-web:${springBootVersion}"
+		implementation "org.springframework.boot:spring-boot-starter-web"
 		testImplementation "org.springframework.boot:spring-boot-starter-test:${springBootVersion}"
 		implementation "org.springframework.boot:spring-boot-starter-data-jpa:${springBootVersion}"
 		testRuntimeOnly 'com.fasterxml.jackson.module:jackson-modules-java8:2.10.0'
@@ -209,53 +159,9 @@ subprojects {
 		}
 	}
 
-	task benchmark(type: Test) {
-		group "vra tests"
-		useJUnitPlatform {
-			includeTags 'Benchmark'
-			excludeTags '!Benchmark'
-		}
-		systemProperty "projectRoot", rootProject.projectDir.toString()
-	}
-
-	task benchmarkApiTest(type: Test) {
-		jvmArgs = rootProject.ext.jvmArgs
-		group "vra tests"
-		useJUnitPlatform {
-			includeTags 'BenchmarkApiTest'
-			excludeTags '!BenchmarkApiTest'
-		}
-		systemProperty "projectRoot", rootProject.projectDir.toString()
-	}
-
-	task simulateBenchmarkApiTest(type: Test) {
-		jvmArgs = rootProject.ext.jvmArgs
-		group "vra tests"
-		useJUnitPlatform {
-			includeTags 'SimulationBenchmarkApiTest'
-			excludeTags '!SimulationBenchmarkApiTest'
-		}
-		systemProperty "projectRoot", rootProject.projectDir.toString()
-	}
-
-	task functional(type: Test) {
-		group "vra tests"
-		useJUnitPlatform {
-			includeTags 'Functional'
-			excludeTags '!Functional'
-		}
-	}
-
-	task allButEndToEndTests(type: Test) {
-		group "vra tests"
-		useJUnitPlatform {
-			excludeTags('EndToEnd', 'Benchmark', 'Functional', 'BenchmarkApiTest', 'SimulationBenchmarkApiTest')
-		}
-	}
-
 	version = project.hasProperty('projectVersion') ? project.projectVersion : '0.0.1-SNAPSHOT'
-	sourceCompatibility = 1.8
-	targetCompatibility = 1.8
+	sourceCompatibility = 11
+	targetCompatibility = 11
 
 	sourceSets {
 		main.java.srcDir "src/main/java"
